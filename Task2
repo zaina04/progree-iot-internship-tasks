@@ -1,1 +1,33 @@
-
+#include <DHT.h>
+#define DHTPIN 2
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+void setup() {
+  Serial.begin(9600);
+  dht.begin();
+  Serial.println("Ambient Environment Node");
+  Serial.println("------------------------");
+  delay(2000);
+}
+void loop() {
+  float humidity = dht.readHumidity();
+  float temperatureC = dht.readTemperature();
+  if (isnan(humidity) || isnan(temperatureC)) {
+    Serial.println("Sensor error: Failed to read DHT22 data.");
+    delay(2000);
+    return;
+  }
+  float temperatureF = (temperatureC * 9.0 / 5.0) + 32.0;
+  Serial.println("Environmental Telemetry");
+  Serial.print("Temperature: ");
+  Serial.print(temperatureC, 1);
+  Serial.println(" degrees Celsius");
+  Serial.print("Temperature: ");
+  Serial.print(temperatureF, 1);
+  Serial.println(" degrees Fahrenheit");
+  Serial.print("Humidity: ");
+  Serial.print(humidity, 1);
+  Serial.println(" percent");
+  Serial.println("------------------------");
+  delay(2000);
+}
