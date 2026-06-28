@@ -1,1 +1,258 @@
+#include <WiFi.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
 
+// -------------------- Wi-Fi Details --------------------
+
+#define WIFI_SSID "Wokwi-GUEST"
+#define WIFI_PASSWORD ""
+
+// For hardware, replace the above with:
+// #define WIFI_SSID "YOUR_WIFI_NAME"
+// #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// -------------------- Adafruit IO Details --------------------
+
+#define AIO_SERVER "io.adafruit.com"
+#define AIO_SERVERPORT 1883
+
+#define AIO_USERNAME "zaina44"
+#define AIO_KEY "PASTE_YOUR_AIO_KEY_HERE"
+
+// -------------------- Pin Settings --------------------
+
+#define SOIL_SENSOR_PIN 34
+#define PUMP_PIN 26
+#define OVERRIDE_PIN 25
+
+// -------------------- Moisture Thresholds --------------------
+
+// If moisture is below this value, soil is considered dry.
+#define DRY_THRESHOLD 40
+
+// If moisture reaches this value, pump turns OFF.
+#define WET_THRESHOLD 60
+
+// Safety limit to prevent over-saturation.
+#define MAX_SAFE_MOISTURE 80
+
+// -------------------- MQTT Setup --------------------
+
+WiFiClient client;
+
+Adafruit_MQTT_Client mqtt(
+  &client,
+  AIO_SERVER,
+  AIO_SERVERPORT,
+  AIO_USERNAME,
+  AIO_KEY
+);
+
+Adafruit_MQTT_Publish soilMoistureFeed =
+  Adafruit_MQTT_Publish(
+    &mqtt,
+    AIO_USERNAME "/feeds/soil-moisture"
+  );
+
+Adafruit_MQTT_Publish pumpStatusFeed =
+  Adafruit_MQTT_Publish(
+    &mqtt,
+    AIO_USERNAME "/feeds/pump-status"
+  );
+
+Adafruit_MQTT_Publish overrideStatusFeed =
+  Adafruit_MQTT_Publish(
+    &mqtt,
+    AIO_USERNAME "/feeds/override-status"
+  );
+
+// -------------------- Function Declarations --------------------
+
+void connectToWiFi();
+void connectToMQTT();
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(PUMP_PIN, OUTPUT);
+  pinMode(OVERRIDE_PIN, INPUT_PULLUP);
+
+  digitalWrite(PUMP_PIN, LOW);
+
+  Serial.println();
+  Serial.println("Smart Irrigation Gateway");
+  Serial.println("------------------------");
+
+  connectToWiFi();
+  connectToMQTT();
+}
+
+void loop() {
+  // Reconnect Wi-Fi if disconnected
+  if (WiFi.status() != WL_CONNECTED) {
+    connectToWiFi();
+  }
+
+  // Reconnect MQTT if disconnected
+  if (!mqtt.connected()) {
+    connectToMQTT();
+  }
+
+  mqtt.processPackets(100);
+
+  if (!mqtt.ping()) {
+    mqtt.disconnect();
+  }
+
+  // Read simulated soil moisture from potentiometer
+  int rawValue = analogRead(SOIL_SENSOR_PIN);
+
+  // Convert raw analogue value into percentage
+  int soilMoisture = map(rawValue, 0, 4095, 0, 100);
+
+  // Read local override switch
+  bool overrideActive = digitalRead(OVERRIDE_PIN) == LOW;
+
+  bool pumpOn = false;
+
+  // Manual override condition
+  if (overrideActive == true) {
+    if (soilMoisture < MAX_SAFE_MOISTURE) {
+      pumpOn = true;
+    } else {
+      pumpOn = false;
+    }
+  }
+
+  // Automatic irrigation condition
+  else {
+    if (soilMoisture < DRY_THRESHOLD) {
+      pumpOn = true;
+    }
+
+    else if (soilMoisture >= WET_THRESHOLD) {
+      pumpOn = false;
+    }
+
+    else {
+      pumpOn = false;
+    }
+  }
+
+  // Control pump/relay indicator
+  if (pumpOn == true) {
+    digitalWrite(PUMP_PIN, HIGH);
+  } else {
+    digitalWrite(PUMP_PIN, LOW);
+  }
+
+  // Display values on Serial Monitor
+  Serial.println();
+  Serial.println("Irrigation Telemetry");
+
+  Serial.print("Raw Sensor Value: ");
+  Serial.println(rawValue);
+
+  Serial.print("Soil Moisture: ");
+  Serial.print(soilMoisture);
+  Serial.println(" %");
+
+  Serial.print("Override Status: ");
+  if (overrideActive == true) {
+    Serial.println("ACTIVE");
+  } else {
+    Serial.println("OFF");
+  }
+
+  Serial.print("Pump Status: ");
+  if (pumpOn == true) {
+    Serial.println("ON");
+  } else {
+    Serial.println("OFF");
+  }
+
+  // Publish soil moisture to Adafruit IO
+  Serial.print("Publishing soil moisture... ");
+
+  if (soilMoistureFeed.publish(soilMoisture)) {
+    Serial.println("Success");
+  } else {
+    Serial.println("Failed");
+  }
+
+  // Publish pump status to Adafruit IO
+  Serial.print("Publishing pump status... ");
+
+  if (pumpOn == true) {
+    if (pumpStatusFeed.publish("ON")) {
+      Serial.println("Success");
+    } else {
+      Serial.println("Failed");
+    }
+  } else {
+    if (pumpStatusFeed.publish("OFF")) {
+      Serial.println("Success");
+    } else {
+      Serial.println("Failed");
+    }
+  }
+
+  // Publish override status to Adafruit IO
+  Serial.print("Publishing override status... ");
+
+  if (overrideActive == true) {
+    if (overrideStatusFeed.publish("ACTIVE")) {
+      Serial.println("Success");
+    } else {
+      Serial.println("Failed");
+    }
+  } else {
+    if (overrideStatusFeed.publish("OFF")) {
+      Serial.println("Success");
+    } else {
+      Serial.println("Failed");
+    }
+  }
+
+  Serial.println("------------------------");
+
+  delay(10000);
+}
+
+void connectToWiFi() {
+  Serial.print("Connecting to Wi-Fi");
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("Wi-Fi connected successfully.");
+
+  Serial.print("ESP32 IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void connectToMQTT() {
+  int8_t result;
+
+  Serial.print("Connecting to Adafruit IO");
+
+  while ((result = mqtt.connect()) != 0) {
+    Serial.println();
+
+    Serial.print("MQTT connection failed: ");
+    Serial.println(mqtt.connectErrorString(result));
+
+    mqtt.disconnect();
+
+    Serial.println("Retrying in 5 seconds...");
+    delay(5000);
+  }
+
+  Serial.println();
+  Serial.println("Connected to Adafruit IO successfully.");
+}
